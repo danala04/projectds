@@ -1,0 +1,181 @@
+---
+title: "Projek"
+author: "Daffa Nabil Libriana"
+date: "12/6/2021"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library dan import data
+
+```{r}
+  library(tidymodels)
+  library(vroom)
+  library(here)
+  library(tidytext)
+  library(textclean)
+	library(dplyr)
+  library(wordcloud)
+  library(wordcloud2)
+  library(shiny)
+  data <- vroom(here("mydata.csv"))
+```
+
+## Cleaning Data
+
+```{r}
+  some_txt <- data$message
+  #remove emoji
+  some_txt = gsub("[^\x01-\x7F]", "", some_txt)
+  # remove retweet entities
+  some_txt = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", some_txt)
+  # remove at people
+  some_txt = gsub("@\\w+", "", some_txt)
+  # remove punctuation
+  some_txt = gsub("[[:punct:]]", "", some_txt)
+  # remove numbers
+  some_txt = gsub("[[:digit:]]", "", some_txt)
+  # remove html links
+  some_txt = gsub("http\\w+", "", some_txt)
+  # remove unnecessary spaces
+  some_txt = gsub("[ \t]{2,}", "", some_txt)
+  some_txt = gsub("^\\s+|\\s+$", "", some_txt)
+  some_txt = gsub("note", "", some_txt)# define "tolower error handling" function 
+  try.error = function(x)
+  {
+    # create missing value
+    y = NA
+    # tryCatch error
+    try_error = tryCatch(tolower(x), error=function(e) e)
+    # if not an error
+    if (!inherits(try_error, "error"))
+      y = tolower(x)
+    # result
+    return(y)
+  }
+  # lower case using try.error with sapply 
+  some_txt = sapply(some_txt, try.error)# remove NAs in some_txt
+  some_txt = some_txt[!is.na(some_txt)]
+  names(some_txt) = NULL
+  dataclean <- data %>%
+    mutate(message=some_txt) %>%
+    mutate(sentiment = case_when(sentiment==2~"news",sentiment==1~"pro",sentiment==0~"neutral",sentiment==-1~"anti")) %>%
+    distinct(message, .keep_all= TRUE)
+  
+```
+
+## Tokenisasi
+
+```{r}
+  datatoken <- dataclean %>%
+  filter(message != "nan") %>%
+  unnest_tokens(word,message) %>%
+  anti_join(stop_words)
+```
+
+## Lexicon Sentimen Analisis
+
+```{r}
+  datalexicon <- select(datatoken,word) %>% 
+    inner_join(get_sentiments("nrc"))  %>%
+    count(sentiment, sort = TRUE)
+  datalexicon
+```
+
+## Sentiment Plot
+
+```{r}
+  datalexicon %>%
+  arrange(n) %>%
+  ggplot(aes(x = sentiment, y = n, fill=sentiment)) +
+  geom_bar(stat = "identity") + labs(title="Sentimen Analisis")
+```
+
+## Freqword Plot
+
+```{r}
+  dataword <- select(datatoken,word) %>%
+  count(word, sort = TRUE) %>%
+  top_n(10)
+  dataword %>%
+  ggplot(aes(x = reorder(word,n), y = n)) +
+  geom_bar(stat = "identity",fill = "#FF6666") + labs(title="Most Freq Word")
+```
+
+## Wordcloud
+
+```{r}
+  dataword <- select(datatoken,word) %>%
+  count(word, sort = TRUE)
+  wordcloud(words = dataword$word, freq = dataword$n, min.freq = 1,max.words=100, random.order=FALSE, rot.per=0.1, colors=brewer.pal(8, "Dark2"))
+  #wordcloud2(data=dataword, size=0.5, color='random-dark', shape="square")
+```
+
+## UI
+
+```{r}
+ui <- fluidPage(
+    titlePanel("Climate Change Tweet"),
+        mainPanel(
+            
+            tabsetPanel(type = "tabs",
+                        tabPanel("Data", DT::dataTableOutput('tbl')),
+                        tabPanel("Scatterplot", plotOutput("scatterplot")),
+                        tabPanel("Freq Word", plotOutput("freqword")), 
+                        tabPanel("Wordcloud", plotOutput("Wordcloud"))
+                        )
+        )
+    )
+```
+
+## Server
+
+```{r}
+server <- function(input, output) {
+    
+
+# Output Data
+output$tbl = DT::renderDataTable({
+    DT::datatable(dataclean, options = list(lengthChange = FALSE))
+})
+
+# Output scatterplot  
+output$scatterplot <- renderPlot({
+  datalexicon %>%
+  arrange(n) %>%
+  ggplot(aes(x = sentiment, y = n, fill=sentiment)) +
+  geom_bar(stat = "identity") + labs(title="Sentimen Analisis")
+})
+
+# Output freqword  
+output$freqword <- renderPlot({
+  dataword <- select(datatoken,word) %>%
+  count(word, sort = TRUE) %>%
+  top_n(10)
+  dataword %>%
+  ggplot(aes(x = reorder(word,n), y = n)) +
+  geom_bar(stat = "identity",fill = "#FF6666") + labs(title="Most Freq Word")
+})
+
+# Output wordcloud
+output$Wordcloud <- renderPlot({
+    dataword <- select(datatoken,word) %>%
+    count(word, sort = TRUE)
+    wordcloud(words = dataword$word, freq = dataword$n, min.freq = 1,max.words=100, random.order=FALSE, rot.per=0.1, colors=brewer.pal(8, "Dark2"))
+  #wordcloud2(data=dataword, size=0.5, color='random-dark', shape="square")
+})
+}
+```
+
+## RunApp
+
+```{r}
+shinyApp(ui = ui, server = server)
+```
